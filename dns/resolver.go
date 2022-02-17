@@ -209,11 +209,11 @@ func (r *Resolver) shouldOnlyQueryFallback(m *D.Msg) bool {
 
 	for _, df := range r.fallbackDomainFilters {
 		if df.Match(domain) {
-			return true
+			return false
 		}
 	}
 
-	return false
+	return true
 }
 
 func (r *Resolver) ipExchange(ctx context.Context, m *D.Msg) (*D.Msg, error) {

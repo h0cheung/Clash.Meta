@@ -1,22 +1,4 @@
-<h1 align="center">
-  <img src="Meta.png" alt="Meta Kennel" width="200">
-  <br>Meta Kernel<br>
-</h1>
-
-<h3 align="center">Another Clash Kernel.</h3>
-
-<p align="center">
-  <a href="https://goreportcard.com/report/github.com/Clash-Mini/Clash.Meta">
-    <img src="https://goreportcard.com/badge/github.com/Clash-Mini/Clash.Meta?style=flat-square">
-  </a>
-  <img src="https://img.shields.io/github/go-mod/go-version/Dreamacro/clash?style=flat-square">
-  <a href="https://github.com/Clash-Mini/Clash.Meta/releases">
-    <img src="https://img.shields.io/github/release/Clash-Mini/Clash.Meta/all.svg?style=flat-square">
-  </a>
-  <a href="https://github.com/Clash-Mini/Clash.Meta">
-    <img src="https://img.shields.io/badge/release-Meta-00b4f0?style=flat-square">
-  </a>
-</p>
+**This is a special fork of [Clash.Meta](https://github.com/MetaCubeX/Clash.Meta). `dns.fallback-filter.geosite` uses nameserver, and all other domains use fallback, which is the opposite of the original.**
 
 ## Features
 
