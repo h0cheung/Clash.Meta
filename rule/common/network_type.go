@@ -7,25 +7,28 @@ import (
 )
 
 type NetworkType struct {
+	*Base
 	network C.NetWork
 	adapter string
 }
 
 func NewNetworkType(network, adapter string) (*NetworkType, error) {
-	ntType := new(NetworkType)
-	ntType.adapter = adapter
+	var netType C.NetWork
 	switch strings.ToUpper(network) {
 	case "TCP":
-		ntType.network = C.TCP
+		netType = C.TCP
 		break
 	case "UDP":
-		ntType.network = C.UDP
+		netType = C.UDP
 		break
 	default:
 		return nil, fmt.Errorf("unsupported network type, only TCP/UDP")
 	}
-
-	return ntType, nil
+	return &NetworkType{
+		Base:    &Base{},
+		network: netType,
+		adapter: adapter,
+	}, nil
 }
 
 func (n *NetworkType) RuleType() C.RuleType {
@@ -42,12 +45,4 @@ func (n *NetworkType) Adapter() string {
 
 func (n *NetworkType) Payload() string {
 	return n.network.String()
-}
-
-func (n *NetworkType) ShouldResolveIP() bool {
-	return false
-}
-
-func (n *NetworkType) RuleExtra() *C.RuleExtra {
-	return nil
 }

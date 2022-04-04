@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
+	"github.com/dlclark/regexp2"
 	"runtime"
 	"time"
 
@@ -20,7 +20,7 @@ const (
 )
 
 type ProxySchema struct {
-	Proxies []map[string]interface{} `yaml:"proxies"`
+	Proxies []map[string]any `yaml:"proxies"`
 }
 
 // for auto gc
@@ -35,12 +35,13 @@ type proxySetProvider struct {
 }
 
 func (pp *proxySetProvider) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"name":        pp.Name(),
 		"type":        pp.Type().String(),
 		"vehicleType": pp.VehicleType().String(),
 		"proxies":     pp.Proxies(),
-		"updatedAt":   pp.updatedAt,
+		//TODO maybe error because year value overflow
+		"updatedAt": pp.updatedAt,
 	})
 }
 
@@ -101,7 +102,8 @@ func stopProxyProvider(pd *ProxySetProvider) {
 }
 
 func NewProxySetProvider(name string, interval time.Duration, filter string, vehicle types.Vehicle, hc *HealthCheck) (*ProxySetProvider, error) {
-	filterReg, err := regexp.Compile(filter)
+	//filterReg, err := regexp.Compile(filter)
+	filterReg, err := regexp2.Compile(filter, 0)
 	if err != nil {
 		return nil, fmt.Errorf("invalid filter regex: %w", err)
 	}
@@ -111,12 +113,12 @@ func NewProxySetProvider(name string, interval time.Duration, filter string, veh
 		healthCheck: hc,
 	}
 
-	onUpdate := func(elm interface{}) {
+	onUpdate := func(elm any) {
 		ret := elm.([]C.Proxy)
 		pd.setProxies(ret)
 	}
 
-	proxiesParseAndFilter := func(buf []byte) (interface{}, error) {
+	proxiesParseAndFilter := func(buf []byte) (any, error) {
 		schema := &ProxySchema{}
 
 		if err := yaml.Unmarshal(buf, schema); err != nil {
@@ -129,7 +131,9 @@ func NewProxySetProvider(name string, interval time.Duration, filter string, veh
 
 		proxies := []C.Proxy{}
 		for idx, mapping := range schema.Proxies {
-			if name, ok := mapping["name"]; ok && len(filter) > 0 && !filterReg.MatchString(name.(string)) {
+			name, ok := mapping["name"]
+			mat, _ := filterReg.FindStringMatch(name.(string))
+			if ok && len(filter) > 0 && mat == nil {
 				continue
 			}
 			proxy, err := adapter.ParseProxy(mapping)
@@ -169,7 +173,7 @@ type compatibleProvider struct {
 }
 
 func (cp *compatibleProvider) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"name":        cp.Name(),
 		"type":        cp.Type().String(),
 		"vehicleType": cp.VehicleType().String(),

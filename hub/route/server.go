@@ -73,6 +73,7 @@ func Start(addr string, secret string) {
 		r.Mount("/providers/proxies", proxyProviderRouter())
 		r.Mount("/providers/rules", ruleProviderRouter())
 		r.Mount("/script", scriptRouter())
+		r.Mount("/cache", cacheRouter())
 	})
 
 	if uiPath != "" {
@@ -117,10 +118,10 @@ func authentication(next http.Handler) http.Handler {
 		}
 
 		header := r.Header.Get("Authorization")
-		text := strings.SplitN(header, " ", 2)
+		bearer, token, found := strings.Cut(header, " ")
 
-		hasInvalidHeader := text[0] != "Bearer"
-		hasInvalidSecret := len(text) != 2 || text[1] != serverSecret
+		hasInvalidHeader := bearer != "Bearer"
+		hasInvalidSecret := !found || token != serverSecret
 		if hasInvalidHeader || hasInvalidSecret {
 			render.Status(r, http.StatusUnauthorized)
 			render.JSON(w, r, ErrUnauthorized)
@@ -132,7 +133,7 @@ func authentication(next http.Handler) http.Handler {
 }
 
 func hello(w http.ResponseWriter, r *http.Request) {
-	render.JSON(w, r, render.M{"hello": "clash"})
+	render.JSON(w, r, render.M{"hello": "clash.meta"})
 }
 
 func traffic(w http.ResponseWriter, r *http.Request) {

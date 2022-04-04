@@ -1,7 +1,7 @@
 name: Release
 on: [push]
 jobs:
-  dev-build:
+  Feature-build:
     if: ${{ !contains(github.event.head_commit.message, '[Skip CI]') }}
     runs-on: ubuntu-latest
     steps:
@@ -15,7 +15,7 @@ jobs:
           go-version: ${{ steps.version.outputs.go_version }}
 
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Cache go module
         uses: actions/cache@v2
@@ -24,9 +24,9 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
-#      - name: Get dependencies, run test
-#        run: |
-#          go test ./...
+      #      - name: Get dependencies, run test
+      #        run: |
+      #          go test ./...
       - name: Build
         if: success()
         env:
@@ -34,11 +34,25 @@ jobs:
           BINDIR: bin
         run: make -j releases
 
+      - name: Delete current release assets
+        uses: andreaswilli/delete-release-assets-action@v2.0.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: alpha
+          deleteOnlyFromDrafts: false
+
+      - name: Tag Repo
+        uses: richardsimko/update-tag@v1
+        with:
+          tag_name: v1.10.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Upload Release
         uses: softprops/action-gh-release@v1
-        if: ${{ env.GIT_BRANCH != 'Meta' && success() }}
+        if: ${{ env.GIT_BRANCH == 'Meta' && success() }}
         with:
-          tag_name: v1.9.1
+          tag: ${{ github.ref }}
+          tag_name: v1.10.0
           files: bin/*
-          release: true
-
+          prerelease: false

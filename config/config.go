@@ -7,9 +7,9 @@ import (
 	R "github.com/Dreamacro/clash/rule"
 	RP "github.com/Dreamacro/clash/rule/provider"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
-	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -19,6 +19,7 @@ import (
 	"github.com/Dreamacro/clash/adapter/outboundgroup"
 	"github.com/Dreamacro/clash/adapter/provider"
 	"github.com/Dreamacro/clash/component/auth"
+	"github.com/Dreamacro/clash/component/dialer"
 	"github.com/Dreamacro/clash/component/fakeip"
 	"github.com/Dreamacro/clash/component/geodata"
 	"github.com/Dreamacro/clash/component/geodata/router"
@@ -26,6 +27,7 @@ import (
 	C "github.com/Dreamacro/clash/constant"
 	providerTypes "github.com/Dreamacro/clash/constant/provider"
 	"github.com/Dreamacro/clash/dns"
+	"github.com/Dreamacro/clash/listener/tun/ipstack/commons"
 	"github.com/Dreamacro/clash/log"
 	T "github.com/Dreamacro/clash/tunnel"
 
@@ -41,11 +43,12 @@ type General struct {
 	LogLevel      log.LogLevel `json:"log-level"`
 	IPv6          bool         `json:"ipv6"`
 	Interface     string       `json:"-"`
+	RoutingMark   int          `json:"-"`
+	GeodataMode   bool         `json:"geodata-mode"`
 	GeodataLoader string       `json:"geodata-loader"`
-	AutoIptables  bool         `json:"auto-iptables"`
 }
 
-// Inbound
+// Inbound config
 type Inbound struct {
 	Port           int      `json:"port"`
 	SocksPort      int      `json:"socks-port"`
@@ -57,7 +60,7 @@ type Inbound struct {
 	BindAddress    string   `json:"bind-address"`
 }
 
-// Controller
+// Controller config
 type Controller struct {
 	ExternalController string `json:"-"`
 	ExternalUI         string `json:"-"`
@@ -66,17 +69,18 @@ type Controller struct {
 
 // DNS config
 type DNS struct {
-	Enable            bool             `yaml:"enable"`
-	IPv6              bool             `yaml:"ipv6"`
-	NameServer        []dns.NameServer `yaml:"nameserver"`
-	Fallback          []dns.NameServer `yaml:"fallback"`
-	FallbackFilter    FallbackFilter   `yaml:"fallback-filter"`
-	Listen            string           `yaml:"listen"`
-	EnhancedMode      C.DNSMode        `yaml:"enhanced-mode"`
-	DefaultNameserver []dns.NameServer `yaml:"default-nameserver"`
-	FakeIPRange       *fakeip.Pool
-	Hosts             *trie.DomainTrie
-	NameServerPolicy  map[string]dns.NameServer
+	Enable                bool             `yaml:"enable"`
+	IPv6                  bool             `yaml:"ipv6"`
+	NameServer            []dns.NameServer `yaml:"nameserver"`
+	Fallback              []dns.NameServer `yaml:"fallback"`
+	FallbackFilter        FallbackFilter   `yaml:"fallback-filter"`
+	Listen                string           `yaml:"listen"`
+	EnhancedMode          C.DNSMode        `yaml:"enhanced-mode"`
+	DefaultNameserver     []dns.NameServer `yaml:"default-nameserver"`
+	FakeIPRange           *fakeip.Pool
+	Hosts                 *trie.DomainTrie
+	NameServerPolicy      map[string]dns.NameServer
+	ProxyServerNameserver []dns.NameServer
 }
 
 // FallbackFilter config
@@ -102,16 +106,24 @@ type Profile struct {
 
 // Tun config
 type Tun struct {
-	Enable    bool     `yaml:"enable" json:"enable"`
-	Stack     string   `yaml:"stack" json:"stack"`
-	DnsHijack []string `yaml:"dns-hijack" json:"dns-hijack"`
-	AutoRoute bool     `yaml:"auto-route" json:"auto-route"`
+	Enable    bool             `yaml:"enable" json:"enable"`
+	Device    string           `yaml:"device" json:"device"`
+	Stack     C.TUNStack       `yaml:"stack" json:"stack"`
+	DNSHijack []netip.AddrPort `yaml:"dns-hijack" json:"dns-hijack"`
+	AutoRoute bool             `yaml:"auto-route" json:"auto-route"`
 }
 
 // Script config
 type Script struct {
 	MainCode      string            `yaml:"code" json:"code"`
 	ShortcutsCode map[string]string `yaml:"shortcuts" json:"shortcuts"`
+}
+
+// IPTables config
+type IPTables struct {
+	Enable           bool     `yaml:"enable" json:"enable"`
+	InboundInterface string   `yaml:"inbound-interface" json:"inbound-interface"`
+	Bypass           []string `yaml:"bypass" json:"bypass"`
 }
 
 // Experimental config
@@ -121,6 +133,7 @@ type Experimental struct{}
 type Config struct {
 	General       *General
 	Tun           *Tun
+	IPTables      *IPTables
 	DNS           *DNS
 	Experimental  *Experimental
 	Hosts         *trie.DomainTrie
@@ -133,18 +146,19 @@ type Config struct {
 }
 
 type RawDNS struct {
-	Enable            bool              `yaml:"enable"`
-	IPv6              bool              `yaml:"ipv6"`
-	UseHosts          bool              `yaml:"use-hosts"`
-	NameServer        []string          `yaml:"nameserver"`
-	Fallback          []string          `yaml:"fallback"`
-	FallbackFilter    RawFallbackFilter `yaml:"fallback-filter"`
-	Listen            string            `yaml:"listen"`
-	EnhancedMode      C.DNSMode         `yaml:"enhanced-mode"`
-	FakeIPRange       string            `yaml:"fake-ip-range"`
-	FakeIPFilter      []string          `yaml:"fake-ip-filter"`
-	DefaultNameserver []string          `yaml:"default-nameserver"`
-	NameServerPolicy  map[string]string `yaml:"nameserver-policy"`
+	Enable                bool              `yaml:"enable"`
+	IPv6                  bool              `yaml:"ipv6"`
+	UseHosts              bool              `yaml:"use-hosts"`
+	NameServer            []string          `yaml:"nameserver"`
+	Fallback              []string          `yaml:"fallback"`
+	FallbackFilter        RawFallbackFilter `yaml:"fallback-filter"`
+	Listen                string            `yaml:"listen"`
+	EnhancedMode          C.DNSMode         `yaml:"enhanced-mode"`
+	FakeIPRange           string            `yaml:"fake-ip-range"`
+	FakeIPFilter          []string          `yaml:"fake-ip-filter"`
+	DefaultNameserver     []string          `yaml:"default-nameserver"`
+	NameServerPolicy      map[string]string `yaml:"nameserver-policy"`
+	ProxyServerNameserver []string          `yaml:"proxy-server-nameserver"`
 }
 
 type RawFallbackFilter struct {
@@ -153,6 +167,14 @@ type RawFallbackFilter struct {
 	IPCIDR    []string `yaml:"ipcidr"`
 	Domain    []string `yaml:"domain"`
 	GeoSite   []string `yaml:"geosite"`
+}
+
+type RawTun struct {
+	Enable    bool       `yaml:"enable" json:"enable"`
+	Device    string     `yaml:"device" json:"device"`
+	Stack     C.TUNStack `yaml:"stack" json:"stack"`
+	DNSHijack []string   `yaml:"dns-hijack" json:"dns-hijack"`
+	AutoRoute bool       `yaml:"auto-route" json:"auto-route"`
 }
 
 type RawConfig struct {
@@ -172,20 +194,21 @@ type RawConfig struct {
 	ExternalUI         string       `yaml:"external-ui"`
 	Secret             string       `yaml:"secret"`
 	Interface          string       `yaml:"interface-name"`
+	RoutingMark        int          `yaml:"routing-mark"`
+	GeodataMode        bool         `yaml:"geodata-mode"`
 	GeodataLoader      string       `yaml:"geodata-loader"`
-	AutoIptables       bool         `yaml:"auto-iptables"`
 
-	ProxyProvider map[string]map[string]interface{} `yaml:"proxy-providers"`
-	RuleProvider  map[string]map[string]interface{} `yaml:"rule-providers"`
-	Hosts         map[string]string                 `yaml:"hosts"`
-	DNS           RawDNS                            `yaml:"dns"`
-	Tun           Tun                               `yaml:"tun"`
-	Experimental  Experimental                      `yaml:"experimental"`
-	Profile       Profile                           `yaml:"profile"`
-	Proxy         []map[string]interface{}          `yaml:"proxies"`
-	ProxyGroup    []map[string]interface{}          `yaml:"proxy-groups"`
-	Rule          []string                          `yaml:"rules"`
-	Script        Script                            `yaml:"script"`
+	ProxyProvider map[string]map[string]any `yaml:"proxy-providers"`
+	RuleProvider  map[string]map[string]any `yaml:"rule-providers"`
+	Hosts         map[string]string         `yaml:"hosts"`
+	DNS           RawDNS                    `yaml:"dns"`
+	Tun           RawTun                    `yaml:"tun"`
+	IPTables      IPTables                  `yaml:"iptables"`
+	Experimental  Experimental              `yaml:"experimental"`
+	Profile       Profile                   `yaml:"profile"`
+	Proxy         []map[string]any          `yaml:"proxies"`
+	ProxyGroup    []map[string]any          `yaml:"proxy-groups"`
+	Rule          []string                  `yaml:"rules"`
 }
 
 // Parse config
@@ -204,25 +227,32 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 		AllowLan:       false,
 		BindAddress:    "*",
 		Mode:           T.Rule,
+		GeodataMode:    C.GeodataMode,
 		GeodataLoader:  "memconservative",
-		AutoIptables:   false,
 		UnifiedDelay:   false,
 		Authentication: []string{},
 		LogLevel:       log.INFO,
 		Hosts:          map[string]string{},
 		Rule:           []string{},
-		Proxy:          []map[string]interface{}{},
-		ProxyGroup:     []map[string]interface{}{},
-		Tun: Tun{
+		Proxy:          []map[string]any{},
+		ProxyGroup:     []map[string]any{},
+		Tun: RawTun{
 			Enable:    false,
-			Stack:     "gvisor",
-			DnsHijack: []string{"198.18.0.2:53"},
-			AutoRoute: false,
+			Device:    "",
+			Stack:     C.TunGvisor,
+			DNSHijack: []string{"0.0.0.0:53"}, // default hijack all dns query
+			AutoRoute: true,
+		},
+		IPTables: IPTables{
+			Enable:           false,
+			InboundInterface: "lo",
+			Bypass:           []string{},
 		},
 		DNS: RawDNS{
-			Enable:      false,
-			UseHosts:    true,
-			FakeIPRange: "198.18.0.1/16",
+			Enable:       false,
+			UseHosts:     true,
+			EnhancedMode: C.DNSMapping,
+			FakeIPRange:  "198.18.0.1/16",
 			FallbackFilter: RawFallbackFilter{
 				GeoIP:     true,
 				GeoIPCode: "CN",
@@ -236,8 +266,8 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 				"1.0.0.1",
 			},
 			NameServer: []string{
-				"223.5.5.5",
-				"119.29.29",
+				"https://doh.pub/dns-query",
+				"tls://223.5.5.5:853",
 			},
 			FakeIPFilter: []string{
 				"dns.msftnsci.com",
@@ -247,10 +277,6 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 		},
 		Profile: Profile{
 			StoreSelected: true,
-		},
-		Script: Script{
-			MainCode:      "",
-			ShortcutsCode: map[string]string{},
 		},
 	}
 
@@ -263,9 +289,11 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 
 func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	config := &Config{}
-
+	log.Infoln("Start initial configuration in progress") //Segment finished in xxm
+	startTime := time.Now()
 	config.Experimental = &rawCfg.Experimental
 	config.Profile = &rawCfg.Profile
+	config.IPTables = &rawCfg.IPTables
 
 	general, err := parseGeneral(rawCfg)
 	if err != nil {
@@ -273,7 +301,13 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	}
 	config.General = general
 
-	config.Tun = &rawCfg.Tun
+	tunCfg, err := parseTun(rawCfg.Tun, config.General)
+	if err != nil {
+		return nil, err
+	}
+	config.Tun = tunCfg
+
+	dialer.DefaultInterface.Store(config.General.Interface)
 
 	proxies, providers, err := parseProxies(rawCfg)
 	if err != nil {
@@ -281,11 +315,6 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	}
 	config.Proxies = proxies
 	config.Providers = providers
-
-	err = parseScript(rawCfg)
-	if err != nil {
-		return nil, err
-	}
 
 	rules, ruleProviders, err := parseRules(rawCfg, proxies)
 	if err != nil {
@@ -308,6 +337,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 	config.Users = parseAuthentication(rawCfg.Authentication)
 
+	elapsedTime := time.Since(startTime) / time.Millisecond                     // duration in ms
+	log.Infoln("Initial configuration complete, total time: %dms", elapsedTime) //Segment finished in xxm
 	return config, nil
 }
 
@@ -343,24 +374,27 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 		LogLevel:      cfg.LogLevel,
 		IPv6:          cfg.IPv6,
 		Interface:     cfg.Interface,
+		RoutingMark:   cfg.RoutingMark,
+		GeodataMode:   cfg.GeodataMode,
 		GeodataLoader: cfg.GeodataLoader,
-		AutoIptables:  cfg.AutoIptables,
 	}, nil
 }
 
 func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[string]providerTypes.ProxyProvider, err error) {
 	proxies = make(map[string]C.Proxy)
 	providersMap = make(map[string]providerTypes.ProxyProvider)
-	var proxyList []string
-	_proxiesList := list.New()
-	_groupsList := list.New()
 	proxiesConfig := cfg.Proxy
 	groupsConfig := cfg.ProxyGroup
 	providersConfig := cfg.ProxyProvider
 
+	var proxyList []string
+	_proxiesList := list.New()
+	_groupsList := list.New()
+
 	proxies["DIRECT"] = adapter.NewProxy(outbound.NewDirect())
 	proxies["REJECT"] = adapter.NewProxy(outbound.NewReject())
 	proxies["COMPATIBLE"] = adapter.NewProxy(outbound.NewCompatible())
+	proxies["PASS"] = adapter.NewProxy(outbound.NewPass())
 	proxyList = append(proxyList, "DIRECT", "REJECT")
 
 	// parse proxy
@@ -424,6 +458,9 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 
 	var ps []C.Proxy
 	for _, v := range proxyList {
+		if proxies[v].Type() == C.Pass {
+			continue
+		}
 		ps = append(ps, proxies[v])
 	}
 	hc := provider.NewHealthCheck(ps, "", 0, true)
@@ -446,53 +483,9 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 	return proxies, providersMap, nil
 }
 
-func parseScript(cfg *RawConfig) error {
-	mode := cfg.Mode
-	script := cfg.Script
-	mainCode := cleanPyKeywords(script.MainCode)
-	shortcutsCode := script.ShortcutsCode
-
-	if mode != T.Script && len(shortcutsCode) == 0 {
-		return nil
-	} else if mode == T.Script && len(mainCode) == 0 {
-		return fmt.Errorf("initialized script module failure, can't find script code in the config file")
-	}
-
-	content :=
-		`# -*- coding: UTF-8 -*-
-
-from datetime import datetime as whatever
-
-class ClashTime:
-  def now(self):
-    return whatever.now()
-  
-  def unix(self):
-    return int(whatever.now().timestamp())
-
-  def unix_nano(self):
-    return int(round(whatever.now().timestamp() * 1000))
-
-time = ClashTime()
-
-`
-	for k, v := range shortcutsCode {
-		v = cleanPyKeywords(v)
-		v = strings.TrimSpace(v)
-		if len(v) == 0 {
-			return fmt.Errorf("initialized rule SCRIPT failure, shortcut [%s] code invalid syntax", k)
-		}
-
-		content += "def " + strings.ToLower(k) + "(ctx, network, process_name, host, src_ip, src_port, dst_ip, dst_port):\n  return " + v + "\n\n"
-	}
-
-	return nil
-}
-
 func parseRules(cfg *RawConfig, proxies map[string]C.Proxy) ([]C.Rule, map[string]*providerTypes.RuleProvider, error) {
 	ruleProviders := map[string]*providerTypes.RuleProvider{}
-
-	startTime := time.Now()
+	log.Infoln("Geodata Loader mode: %s", geodata.LoaderName())
 	// parse rule provider
 	for name, mapping := range cfg.RuleProvider {
 		rp, err := RP.ParseRuleProvider(name, mapping)
@@ -522,29 +515,27 @@ func parseRules(cfg *RawConfig, proxies map[string]C.Proxy) ([]C.Rule, map[strin
 			continue
 		}
 
+		l := len(rule)
+
 		if ruleName == "NOT" || ruleName == "OR" || ruleName == "AND" {
-			payload = strings.Join(rule[1:len(rule)-1], ",")
-			target = rule[len(rule)-1]
+			target = rule[l-1]
+			payload = strings.Join(rule[1:l-1], ",")
 		} else {
-			switch l := len(rule); {
-			case l == 2:
-				target = rule[1]
-			case l == 3:
-				if ruleName == "MATCH" {
-					payload = ""
-					target = rule[1]
-					params = rule[2:]
-					break
-				}
-				payload = rule[1]
-				target = rule[2]
-			case l >= 4:
-				payload = rule[1]
-				target = rule[2]
-				params = rule[3:]
-			default:
+			if l < 2 {
 				return nil, nil, fmt.Errorf("rules[%d] [%s] error: format invalid", idx, line)
 			}
+			if l < 4 {
+				rule = append(rule, make([]string, 4-l)...)
+			}
+			if ruleName == "MATCH" {
+				l = 2
+			}
+			if l >= 3 {
+				l = 3
+				payload = rule[1]
+			}
+			target = rule[l-1]
+			params = rule[l:]
 		}
 
 		if _, ok := proxies[target]; mode != T.Script && !ok {
@@ -555,8 +546,9 @@ func parseRules(cfg *RawConfig, proxies map[string]C.Proxy) ([]C.Rule, map[strin
 
 		if ruleName == "GEOSITE" {
 			if err := initGeoSite(); err != nil {
-				return nil, nil, fmt.Errorf("can't initial GeoSite: %w", err)
+				return nil, nil, fmt.Errorf("can't initial GeoSite: %s", err)
 			}
+			initMode = false
 		}
 		parsed, parseErr := R.ParseRule(ruleName, payload, target, params)
 		if parseErr != nil {
@@ -567,9 +559,7 @@ func parseRules(cfg *RawConfig, proxies map[string]C.Proxy) ([]C.Rule, map[strin
 			rules = append(rules, parsed)
 		}
 	}
-	elapsedTime := time.Since(startTime) / time.Millisecond       // duration in ms
-	log.Infoln("Initialization time consuming %dms", elapsedTime) //Segment finished in xxm
-	log.Infoln("Geodata Loader mode: %s", geodata.LoaderName())
+
 	runtime.GC()
 
 	return rules, ruleProviders, nil
@@ -644,6 +634,9 @@ func parseNameServer(servers []string) ([]dns.NameServer, error) {
 		case "dhcp":
 			addr = u.Host
 			dnsNetType = "dhcp" // UDP from DHCP
+		case "quic":
+			addr, err = hostWithDefaultPort(u.Host, "784")
+			dnsNetType = "quic" // DNS over QUIC
 		default:
 			return nil, fmt.Errorf("DNS NameServer[%d] unsupport scheme: %s", idx, u.Scheme)
 		}
@@ -658,6 +651,7 @@ func parseNameServer(servers []string) ([]dns.NameServer, error) {
 				Net:          dnsNetType,
 				Addr:         addr,
 				ProxyAdapter: u.Fragment,
+				Interface:    dialer.DefaultInterface.Load(),
 			},
 		)
 	}
@@ -699,7 +693,7 @@ func parseFallbackGeoSite(countries []string, rules []C.Rule) ([]*router.DomainM
 	var sites []*router.DomainMatcher
 	if len(countries) > 0 {
 		if err := initGeoSite(); err != nil {
-			return nil, fmt.Errorf("can't initial GeoSite: %w", err)
+			return nil, fmt.Errorf("can't initial GeoSite: %s", err)
 		}
 	}
 
@@ -756,6 +750,10 @@ func parseDNS(rawCfg *RawConfig, hosts *trie.DomainTrie, rules []C.Rule) (*DNS, 
 	}
 
 	if dnsCfg.NameServerPolicy, err = parseNameServerPolicy(cfg.NameServerPolicy); err != nil {
+		return nil, err
+	}
+
+	if dnsCfg.ProxyServerNameserver, err = parseNameServer(cfg.ProxyServerNameserver); err != nil {
 		return nil, err
 	}
 
@@ -835,25 +833,47 @@ func parseDNS(rawCfg *RawConfig, hosts *trie.DomainTrie, rules []C.Rule) (*DNS, 
 }
 
 func parseAuthentication(rawRecords []string) []auth.AuthUser {
-	users := make([]auth.AuthUser, 0)
+	var users []auth.AuthUser
 	for _, line := range rawRecords {
-		userData := strings.SplitN(line, ":", 2)
-		if len(userData) == 2 {
-			users = append(users, auth.AuthUser{User: userData[0], Pass: userData[1]})
+		if user, pass, found := strings.Cut(line, ":"); found {
+			users = append(users, auth.AuthUser{User: user, Pass: pass})
 		}
 	}
 	return users
 }
 
-func cleanPyKeywords(code string) string {
-	if len(code) == 0 {
-		return code
-	}
-	keywords := []string{"import", "print"}
+func parseTun(rawTun RawTun, general *General) (*Tun, error) {
+	if (rawTun.Enable || general.TProxyPort != 0) && general.Interface == "" {
+		autoDetectInterfaceName, err := commons.GetAutoDetectInterface()
+		if err != nil || autoDetectInterfaceName == "" {
+			log.Warnln("Can not find auto detect interface.[%s]", err)
+		} else {
+			log.Warnln("Auto detect interface: %s", autoDetectInterfaceName)
+		}
 
-	for _, kw := range keywords {
-		reg := regexp.MustCompile("(?m)[\r\n]+^.*" + kw + ".*$")
-		code = reg.ReplaceAllString(code, "")
+		general.Interface = autoDetectInterfaceName
 	}
-	return code
+
+	var dnsHijack []netip.AddrPort
+
+	for _, d := range rawTun.DNSHijack {
+		if _, after, ok := strings.Cut(d, "://"); ok {
+			d = after
+		}
+
+		addrPort, err := netip.ParseAddrPort(d)
+		if err != nil {
+			return nil, fmt.Errorf("parse dns-hijack url error: %w", err)
+		}
+
+		dnsHijack = append(dnsHijack, addrPort)
+	}
+
+	return &Tun{
+		Enable:    rawTun.Enable,
+		Device:    rawTun.Device,
+		Stack:     rawTun.Stack,
+		DNSHijack: dnsHijack,
+		AutoRoute: rawTun.AutoRoute,
+	}, nil
 }

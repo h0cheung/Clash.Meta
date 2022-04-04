@@ -41,6 +41,7 @@ type Resolver struct {
 	group                 singleflight.Group
 	lruCache              *cache.LruCache
 	policy                *trie.DomainTrie
+	proxyServer           []dnsClient
 }
 
 // ResolveIP request with TypeA and TypeAAAA, priority return TypeA
@@ -118,7 +119,7 @@ func (r *Resolver) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, e
 func (r *Resolver) exchangeWithoutCache(ctx context.Context, m *D.Msg) (msg *D.Msg, err error) {
 	q := m.Question[0]
 
-	ret, err, shared := r.group.Do(q.String(), func() (result interface{}, err error) {
+	ret, err, shared := r.group.Do(q.String(), func() (result any, err error) {
 		defer func() {
 			if err != nil {
 				return
@@ -150,11 +151,11 @@ func (r *Resolver) exchangeWithoutCache(ctx context.Context, m *D.Msg) (msg *D.M
 	return
 }
 
-func (r *Resolver) batchExchange(ctx context.Context, clients []dnsClient, m *D.Msg) (*D.Msg, error) {
+func (r *Resolver) batchExchange(ctx context.Context, clients []dnsClient, m *D.Msg) (msg *D.Msg, err error) {
 	fast, ctx := picker.WithTimeout(ctx, resolver.DefaultDNSTimeout)
 	for _, client := range clients {
 		r := client
-		fast.Go(func() (interface{}, error) {
+		fast.Go(func() (any, error) {
 			m, err := r.ExchangeContext(ctx, m)
 			if err != nil {
 				return nil, err
@@ -174,8 +175,8 @@ func (r *Resolver) batchExchange(ctx context.Context, clients []dnsClient, m *D.
 		return nil, err
 	}
 
-	msg := elm.(*D.Msg)
-	return msg, nil
+	msg = elm.(*D.Msg)
+	return
 }
 
 func (r *Resolver) matchPolicy(m *D.Msg) []dnsClient {
@@ -216,7 +217,7 @@ func (r *Resolver) shouldOnlyQueryFallback(m *D.Msg) bool {
 	return true
 }
 
-func (r *Resolver) ipExchange(ctx context.Context, m *D.Msg) (*D.Msg, error) {
+func (r *Resolver) ipExchange(ctx context.Context, m *D.Msg) (msg *D.Msg, err error) {
 	if matched := r.matchPolicy(m); len(matched) != 0 {
 		res := <-r.asyncExchange(ctx, matched, m)
 		return res.Msg, res.Error
@@ -233,20 +234,23 @@ func (r *Resolver) ipExchange(ctx context.Context, m *D.Msg) (*D.Msg, error) {
 
 	if r.fallback == nil || len(r.fallback) == 0 { // directly return if no fallback servers are available
 		res := <-msgCh
-		return res.Msg, res.Error
+		msg, err = res.Msg, res.Error
+		return
 	}
 
 	res := <-msgCh
 	if res.Error == nil {
 		if ips := msgToIP(res.Msg); len(ips) != 0 {
 			if !r.shouldIPFallback(ips[0]) {
-				return res.Msg, res.Error // no need to wait for fallback result
+				msg, err = res.Msg, res.Error // no need to wait for fallback result
+				return
 			}
 		}
 	}
 
 	res = <-r.asyncExchange(ctx, r.fallback, m)
-	return res.Msg, res.Error
+	msg, err = res.Msg, res.Error
+	return
 }
 
 func (r *Resolver) resolveIP(host string, dnsType uint16) (ip net.IP, err error) {
@@ -297,6 +301,11 @@ func (r *Resolver) asyncExchange(ctx context.Context, client []dnsClient, msg *D
 	return ch
 }
 
+// HasProxyServer has proxy server dns client
+func (r *Resolver) HasProxyServer() bool {
+	return len(r.main) > 0
+}
+
 type NameServer struct {
 	Net          string
 	Addr         string
@@ -315,6 +324,7 @@ type FallbackFilter struct {
 type Config struct {
 	Main, Fallback []NameServer
 	Default        []NameServer
+	ProxyServer    []NameServer
 	IPv6           bool
 	EnhancedMode   C.DNSMode
 	FallbackFilter FallbackFilter
@@ -338,6 +348,10 @@ func NewResolver(config Config) *Resolver {
 
 	if len(config.Fallback) != 0 {
 		r.fallback = transform(config.Fallback, defaultResolver)
+	}
+
+	if len(config.ProxyServer) != 0 {
+		r.proxyServer = transform(config.ProxyServer, defaultResolver)
 	}
 
 	if len(config.Policy) != 0 {
@@ -373,10 +387,10 @@ func NewResolver(config Config) *Resolver {
 	return r
 }
 
-func NewMainResolver(old *Resolver) *Resolver {
+func NewProxyServerHostResolver(old *Resolver) *Resolver {
 	r := &Resolver{
 		ipv6:     old.ipv6,
-		main:     old.main,
+		main:     old.proxyServer,
 		lruCache: old.lruCache,
 		hosts:    old.hosts,
 		policy:   old.policy,

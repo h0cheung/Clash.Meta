@@ -14,6 +14,14 @@ const (
 	Direct AdapterType = iota
 	Reject
 	Compatible
+	Pass
+
+	Relay
+	Selector
+	Fallback
+	URLTest
+	LoadBalance
+
 	Shadowsocks
 	ShadowsocksR
 	Snell
@@ -22,12 +30,6 @@ const (
 	Vmess
 	Vless
 	Trojan
-
-	Relay
-	Selector
-	Fallback
-	URLTest
-	LoadBalance
 )
 
 const (
@@ -131,6 +133,8 @@ func (at AdapterType) String() string {
 		return "Reject"
 	case Compatible:
 		return "Compatible"
+	case Pass:
+		return "Pass"
 	case Shadowsocks:
 		return "Shadowsocks"
 	case ShadowsocksR:

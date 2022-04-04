@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/Dreamacro/clash/listener/inner"
 	"net"
-	"runtime"
+	"os"
 	"strconv"
 	"sync"
 
@@ -34,7 +34,7 @@ var (
 	tproxyUDPListener *tproxy.UDPListener
 	mixedListener     *mixed.Listener
 	mixedUDPLister    *socks.UDPListener
-	tunAdapter        ipstack.TunAdapter
+	tunStackListener  ipstack.Stack
 
 	// lock for recreate function
 	socksMux  sync.Mutex
@@ -63,18 +63,6 @@ func BindAddress() string {
 
 func SetAllowLan(al bool) {
 	allowLan = al
-}
-
-func Tun() config.Tun {
-	if tunAdapter == nil {
-		return config.Tun{}
-	}
-	return config.Tun{
-		Enable:    true,
-		Stack:     tunAdapter.Stack(),
-		DnsHijack: tunAdapter.DnsHijack(),
-		AutoRoute: tunAdapter.AutoRoute(),
-	}
 }
 
 func SetBindAddress(host string) {
@@ -322,23 +310,30 @@ func ReCreateMixed(port int, tcpIn chan<- C.ConnContext, udpIn chan<- *inbound.P
 	log.Infoln("Mixed(http+socks) proxy listening at: %s", mixedListener.Address())
 }
 
-func ReCreateTun(conf config.Tun, tcpIn chan<- C.ConnContext, udpIn chan<- *inbound.PacketAdapter) error {
+func ReCreateTun(tunConf *config.Tun, dnsCfg *config.DNS, tcpIn chan<- C.ConnContext, udpIn chan<- *inbound.PacketAdapter) {
 	tunMux.Lock()
 	defer tunMux.Unlock()
 
-	if tunAdapter != nil {
-		tunAdapter.Close()
-		tunAdapter = nil
-	}
-
-	if !conf.Enable {
-		return nil
-	}
-
 	var err error
-	tunAdapter, err = tun.New(conf, tcpIn, udpIn)
+	defer func() {
+		if err != nil {
+			log.Errorln("Start TUN listening error: %s", err.Error())
+			os.Exit(2)
+		}
+	}()
 
-	return err
+	if tunStackListener != nil {
+		tunStackListener.Close()
+		tunStackListener = nil
+	}
+
+	if !tunConf.Enable {
+		return
+	}
+	tunStackListener, err = tun.New(tunConf, dnsCfg, tcpIn, udpIn)
+	if err != nil {
+		log.Warnln("Failed to start TUN interface: %s", err.Error())
+	}
 }
 
 // GetPorts return the ports of proxy servers
@@ -397,11 +392,8 @@ func genAddr(host string, port int, allowLan bool) string {
 	return fmt.Sprintf("127.0.0.1:%d", port)
 }
 
-// CleanUp clean up something
-func CleanUp() {
-	if runtime.GOOS == "windows" {
-		if tunAdapter != nil {
-			tunAdapter.Close()
-		}
+func Cleanup() {
+	if tunStackListener != nil {
+		_ = tunStackListener.Close()
 	}
 }

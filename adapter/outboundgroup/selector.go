@@ -50,13 +50,12 @@ func (s *Selector) SupportUDP() bool {
 
 // MarshalJSON implements C.ProxyAdapter
 func (s *Selector) MarshalJSON() ([]byte, error) {
-	all := make([]string, 0)
-
+	all := []string{}
 	for _, proxy := range getProvidersProxies(s.providers, false, s.filter) {
 		all = append(all, proxy.Name())
 	}
 
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"type": s.Type().String(),
 		"now":  s.Now(),
 		"all":  all,
@@ -80,12 +79,12 @@ func (s *Selector) Set(name string) error {
 }
 
 // Unwrap implements C.ProxyAdapter
-func (s *Selector) Unwrap(metadata *C.Metadata) C.Proxy {
+func (s *Selector) Unwrap(*C.Metadata) C.Proxy {
 	return s.selectedProxy(true)
 }
 
 func (s *Selector) selectedProxy(touch bool) C.Proxy {
-	elm, _, _ := s.single.Do(func() (interface{}, error) {
+	elm, _, _ := s.single.Do(func() (any, error) {
 		proxies := getProvidersProxies(s.providers, touch, s.filter)
 		for _, proxy := range proxies {
 			if proxy.Name() == s.selected {

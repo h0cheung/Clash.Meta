@@ -1,12 +1,20 @@
 package logic
 
-import C "github.com/Dreamacro/clash/constant"
+import (
+	C "github.com/Dreamacro/clash/constant"
+	"github.com/Dreamacro/clash/rule/common"
+)
 
 type OR struct {
+	*common.Base
 	rules   []C.Rule
 	payload string
 	adapter string
 	needIP  bool
+}
+
+func (or *OR) ShouldFindProcess() bool {
+	return false
 }
 
 func (or *OR) RuleType() C.RuleType {
@@ -35,12 +43,8 @@ func (or *OR) ShouldResolveIP() bool {
 	return or.needIP
 }
 
-func (or *OR) RuleExtra() *C.RuleExtra {
-	return nil
-}
-
 func NewOR(payload string, adapter string) (*OR, error) {
-	or := &OR{payload: payload, adapter: adapter}
+	or := &OR{Base: &common.Base{}, payload: payload, adapter: adapter}
 	rules, err := parseRuleByPayload(payload)
 	if err != nil {
 		return nil, err

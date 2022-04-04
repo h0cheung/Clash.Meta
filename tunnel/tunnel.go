@@ -3,14 +3,16 @@ package tunnel
 import (
 	"context"
 	"fmt"
-	R "github.com/Dreamacro/clash/rule/common"
 	"net"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/Dreamacro/clash/adapter/inbound"
 	"github.com/Dreamacro/clash/component/nat"
+	P "github.com/Dreamacro/clash/component/process"
 	"github.com/Dreamacro/clash/component/resolver"
 	C "github.com/Dreamacro/clash/constant"
 	"github.com/Dreamacro/clash/constant/provider"
@@ -26,15 +28,14 @@ var (
 	rules         []C.Rule
 	proxies       = make(map[string]C.Proxy)
 	providers     map[string]provider.ProxyProvider
-	configMux     sync.RWMutex
 	ruleProviders map[string]*provider.RuleProvider
+	configMux     sync.RWMutex
+
 	// Outbound Rule
 	mode = Rule
 
 	// default timeout for UDP session
 	udpTimeout = 60 * time.Second
-
-	preProcessCacheFinder, _ = R.NewProcess("", "", nil)
 )
 
 func init() {
@@ -150,15 +151,28 @@ func preHandleMetadata(metadata *C.Metadata) error {
 				// redir-host should lookup the hosts
 				metadata.DstIP = node.Data.(net.IP)
 			}
-		} else if resolver.IsFakeIP(metadata.DstIP) && !C.TunBroadcastAddr.Equal(metadata.DstIP) {
+		} else if resolver.IsFakeIP(metadata.DstIP) {
 			return fmt.Errorf("fake DNS record %s missing", metadata.DstIP)
+		}
+	}
+
+	// pre resolve process name
+	srcPort, err := strconv.Atoi(metadata.SrcPort)
+	if err == nil && P.ShouldFindProcess(metadata) {
+		path, err := P.FindProcessName(metadata.NetWork.String(), metadata.SrcIP, srcPort)
+		if err != nil {
+			log.Debugln("[Process] find process %s: %v", metadata.String(), err)
+		} else {
+			log.Debugln("[Process] %s from process %s", metadata.String(), path)
+			metadata.Process = filepath.Base(path)
+			metadata.ProcessPath = path
 		}
 	}
 
 	return nil
 }
 
-func resolveMetadata(metadata *C.Metadata) (proxy C.Proxy, rule C.Rule, err error) {
+func resolveMetadata(ctx C.PlainContext, metadata *C.Metadata) (proxy C.Proxy, rule C.Rule, err error) {
 	switch mode {
 	case Direct:
 		proxy = proxies["DIRECT"]
@@ -222,7 +236,7 @@ func handleUDPConn(packet *inbound.PacketAdapter) {
 		}()
 
 		pCtx := icontext.NewPacketConnContext(metadata)
-		proxy, rule, err := resolveMetadata(metadata)
+		proxy, rule, err := resolveMetadata(pCtx, metadata)
 		if err != nil {
 			log.Warnln("[UDP] Parse metadata failed: %s", err.Error())
 			return
@@ -280,7 +294,7 @@ func handleTCPConn(connCtx C.ConnContext) {
 		return
 	}
 
-	proxy, rule, err := resolveMetadata(metadata)
+	proxy, rule, err := resolveMetadata(connCtx, metadata)
 	if err != nil {
 		log.Warnln("[Metadata] parse failed: %s", err.Error())
 		return
@@ -336,9 +350,6 @@ func match(metadata *C.Metadata) (C.Proxy, C.Rule, error) {
 		resolved = true
 	}
 
-	// preset process name and cache it
-	preProcessCacheFinder.Match(metadata)
-
 	for _, rule := range rules {
 		if !resolved && shouldResolveIP(rule, metadata) {
 			ip, err := resolver.ResolveIP(metadata.Host)
@@ -357,6 +368,11 @@ func match(metadata *C.Metadata) (C.Proxy, C.Rule, error) {
 				continue
 			}
 
+			if adapter.Type() == C.Pass || (adapter.Unwrap(metadata) != nil && adapter.Unwrap(metadata).Type() == C.Pass) {
+				log.Debugln("%s match Pass rule", adapter.Name())
+				continue
+			}
+
 			if metadata.NetWork == C.UDP && !adapter.SupportUDP() {
 				log.Debugln("%s UDP is not supported", adapter.Name())
 				continue
@@ -369,6 +385,10 @@ func match(metadata *C.Metadata) (C.Proxy, C.Rule, error) {
 				}
 
 				if extra.NotMatchSourceIP(metadata.SrcIP) {
+					continue
+				}
+
+				if extra.NotMatchProcessName(metadata.Process) {
 					continue
 				}
 			}

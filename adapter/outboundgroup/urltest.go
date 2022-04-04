@@ -49,7 +49,6 @@ func (u *URLTest) DialContext(ctx context.Context, metadata *C.Metadata, opts ..
 	} else {
 		u.onDialFailed()
 	}
-
 	return c, err
 }
 
@@ -63,17 +62,16 @@ func (u *URLTest) ListenPacketContext(ctx context.Context, metadata *C.Metadata,
 	} else {
 		u.onDialFailed()
 	}
-
 	return pc, err
 }
 
 // Unwrap implements C.ProxyAdapter
-func (u *URLTest) Unwrap(metadata *C.Metadata) C.Proxy {
+func (u *URLTest) Unwrap(*C.Metadata) C.Proxy {
 	return u.fast(true)
 }
 
 func (u *URLTest) proxies(touch bool) []C.Proxy {
-	elm, _, _ := u.single.Do(func() (interface{}, error) {
+	elm, _, _ := u.single.Do(func() (any, error) {
 		return getProvidersProxies(u.providers, touch, u.filter), nil
 	})
 
@@ -81,7 +79,7 @@ func (u *URLTest) proxies(touch bool) []C.Proxy {
 }
 
 func (u *URLTest) fast(touch bool) C.Proxy {
-	elm, _, _ := u.fastSingle.Do(func() (interface{}, error) {
+	elm, _, _ := u.fastSingle.Do(func() (any, error) {
 		proxies := u.proxies(touch)
 		fast := proxies[0]
 		min := fast.LastDelay()
@@ -125,13 +123,11 @@ func (u *URLTest) SupportUDP() bool {
 
 // MarshalJSON implements C.ProxyAdapter
 func (u *URLTest) MarshalJSON() ([]byte, error) {
-	all := make([]string, 0)
-
+	all := []string{}
 	for _, proxy := range u.proxies(false) {
 		all = append(all, proxy.Name())
 	}
-
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"type": u.Type().String(),
 		"now":  u.Now(),
 		"all":  all,
@@ -164,7 +160,7 @@ func (u *URLTest) onDialFailed() {
 	}
 }
 
-func parseURLTestOption(config map[string]interface{}) []urlTestOption {
+func parseURLTestOption(config map[string]any) []urlTestOption {
 	opts := []urlTestOption{}
 
 	// tolerance

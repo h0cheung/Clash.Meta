@@ -2,15 +2,11 @@ package executor
 
 import (
 	"fmt"
-
 	"net"
 	"os"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
-
-	"github.com/Dreamacro/clash/listener/tproxy"
 
 	"github.com/Dreamacro/clash/adapter"
 	"github.com/Dreamacro/clash/adapter/outboundgroup"
@@ -28,7 +24,7 @@ import (
 	"github.com/Dreamacro/clash/dns"
 	P "github.com/Dreamacro/clash/listener"
 	authStore "github.com/Dreamacro/clash/listener/auth"
-	"github.com/Dreamacro/clash/listener/tun/dev"
+	"github.com/Dreamacro/clash/listener/tproxy"
 	"github.com/Dreamacro/clash/log"
 	"github.com/Dreamacro/clash/tunnel"
 )
@@ -77,22 +73,23 @@ func ApplyConfig(cfg *config.Config, force bool) {
 	defer mux.Unlock()
 
 	updateUsers(cfg.Users)
-	updateHosts(cfg.Hosts)
 	updateProxies(cfg.Proxies, cfg.Providers)
 	updateRules(cfg.Rules, cfg.RuleProviders)
-	updateIPTables(cfg.DNS, cfg.General, cfg.Tun)
 	updateDNS(cfg.DNS, cfg.Tun)
-	updateGeneral(cfg.General, cfg.Tun, force)
-	updateTun(cfg.Tun)
+	updateGeneral(cfg.General, force)
+	updateIPTables(cfg)
+	updateTun(cfg.Tun, cfg.DNS)
 	updateExperimental(cfg)
+	updateHosts(cfg.Hosts)
 	loadProvider(cfg.RuleProviders, cfg.Providers)
 	updateProfile(cfg)
 
+	log.SetLevel(cfg.General.LogLevel)
 }
 
 func GetGeneral() *config.General {
 	ports := P.GetPorts()
-	authenticator := []string{}
+	var authenticator []string
 	if auth := authStore.Authenticator(); auth != nil {
 		authenticator = auth.Users()
 	}
@@ -119,15 +116,7 @@ func GetGeneral() *config.General {
 
 func updateExperimental(c *config.Config) {}
 
-func updateDNS(c *config.DNS, Tun *config.Tun) {
-	if !c.Enable && !Tun.Enable {
-		resolver.DefaultResolver = nil
-		resolver.MainResolver = nil
-		resolver.DefaultHostMapper = nil
-		dns.ReCreateServer("", nil, nil)
-		return
-	}
-
+func updateDNS(c *config.DNS, t *config.Tun) {
 	cfg := dns.Config{
 		Main:         c.NameServer,
 		Fallback:     c.Fallback,
@@ -142,12 +131,13 @@ func updateDNS(c *config.DNS, Tun *config.Tun) {
 			Domain:    c.FallbackFilter.Domain,
 			GeoSite:   c.FallbackFilter.GeoSite,
 		},
-		Default: c.DefaultNameserver,
-		Policy:  c.NameServerPolicy,
+		Default:     c.DefaultNameserver,
+		Policy:      c.NameServerPolicy,
+		ProxyServer: c.ProxyServerNameserver,
 	}
 
 	r := dns.NewResolver(cfg)
-	mr := dns.NewMainResolver(r)
+	pr := dns.NewProxyServerHostResolver(r)
 	m := dns.NewEnhancer(cfg)
 
 	// reuse cache of old host mapper
@@ -156,16 +146,26 @@ func updateDNS(c *config.DNS, Tun *config.Tun) {
 	}
 
 	resolver.DefaultResolver = r
-	resolver.MainResolver = mr
 	resolver.DefaultHostMapper = m
-	if Tun.Enable && !strings.EqualFold(Tun.Stack, "gVisor") {
+
+	if pr.HasProxyServer() {
+		resolver.ProxyServerHostResolver = pr
+	}
+
+	if t.Enable {
 		resolver.DefaultLocalServer = dns.NewLocalServer(r, m)
-	} else {
-		resolver.DefaultLocalServer = nil
 	}
 
 	if c.Enable {
 		dns.ReCreateServer(c.Listen, r, m)
+	} else {
+		if !t.Enable {
+			resolver.DefaultResolver = nil
+			resolver.DefaultHostMapper = nil
+			resolver.DefaultLocalServer = nil
+			resolver.ProxyServerHostResolver = nil
+		}
+		dns.ReCreateServer("", nil, nil)
 	}
 }
 
@@ -213,32 +213,31 @@ func loadProvider(ruleProviders map[string]*provider.RuleProvider, proxyProvider
 	}
 }
 
-func updateGeneral(general *config.General, Tun *config.Tun, force bool) {
+func updateTun(tun *config.Tun, dns *config.DNS) {
+	P.ReCreateTun(tun, dns, tunnel.TCPIn(), tunnel.UDPIn())
+}
+
+func updateGeneral(general *config.General, force bool) {
+	log.SetLevel(general.LogLevel)
 	tunnel.SetMode(general.Mode)
 	resolver.DisableIPv6 = !general.IPv6
-	adapter.UnifiedDelay.Store(general.UnifiedDelay)
 
-	if (Tun.Enable || general.TProxyPort != 0) && general.Interface == "" {
-		autoDetectInterfaceName, err := dev.GetAutoDetectInterface()
-		if err == nil {
-			if autoDetectInterfaceName != "" && autoDetectInterfaceName != "<nil>" {
-				general.Interface = autoDetectInterfaceName
-			} else {
-				log.Debugln("Auto detect interface name is empty.")
-			}
-		} else {
-			log.Debugln("Can not find auto detect interface. %s", err.Error())
-		}
-	}
+	adapter.UnifiedDelay.Store(general.UnifiedDelay)
 
 	dialer.DefaultInterface.Store(general.Interface)
 
-	log.Infoln("Use interface name: %s", general.Interface)
+	if dialer.DefaultInterface.Load() != "" {
+		log.Infoln("Use interface name: %s", general.Interface)
+	}
+
+	dialer.DefaultRoutingMark.Store(int32(general.RoutingMark))
+	if general.RoutingMark > 0 {
+		log.Infoln("Use routing mark: %#x", general.RoutingMark)
+	}
 
 	iface.FlushCache()
 
 	if !force {
-		log.SetLevel(general.LogLevel)
 		return
 	}
 
@@ -259,22 +258,6 @@ func updateGeneral(general *config.General, Tun *config.Tun, force bool) {
 	P.ReCreateRedir(general.RedirPort, tcpIn, udpIn)
 	P.ReCreateTProxy(general.TProxyPort, tcpIn, udpIn)
 	P.ReCreateMixed(general.MixedPort, tcpIn, udpIn)
-
-	log.SetLevel(general.LogLevel)
-}
-
-func updateTun(Tun *config.Tun) {
-	if Tun == nil {
-		return
-	}
-
-	tcpIn := tunnel.TCPIn()
-	udpIn := tunnel.UDPIn()
-
-	if err := P.ReCreateTun(*Tun, tcpIn, udpIn); err != nil {
-		log.Errorln("Start Tun interface error: %s", err.Error())
-		os.Exit(2)
-	}
 }
 
 func updateUsers(users []auth.AuthUser) {
@@ -320,34 +303,75 @@ func patchSelectGroup(proxies map[string]C.Proxy) {
 	}
 }
 
-func updateIPTables(dns *config.DNS, general *config.General, tun *config.Tun) {
-	if runtime.GOOS != "linux" || dns.Listen == "" || general.TProxyPort == 0 || tun.Enable || !general.AutoIptables {
+func updateIPTables(cfg *config.Config) {
+	tproxy.CleanupTProxyIPTables()
+
+	iptables := cfg.IPTables
+	if runtime.GOOS != "linux" || !iptables.Enable {
 		return
 	}
 
-	_, dnsPortStr, err := net.SplitHostPort(dns.Listen)
-	if dnsPortStr == "0" || dnsPortStr == "" || err != nil {
+	var err error
+	defer func() {
+		if err != nil {
+			log.Errorln("[IPTABLES] setting iptables failed: %s", err.Error())
+			os.Exit(2)
+		}
+	}()
+
+	if cfg.Tun.Enable {
+		err = fmt.Errorf("when tun is enabled, iptables cannot be set automatically")
 		return
 	}
 
-	dnsPort, err := strconv.Atoi(dnsPortStr)
+	var (
+		inboundInterface = "lo"
+		bypass           = iptables.Bypass
+		tProxyPort       = cfg.General.TProxyPort
+		dnsCfg           = cfg.DNS
+	)
+
+	if tProxyPort == 0 {
+		err = fmt.Errorf("tproxy-port must be greater than zero")
+		return
+	}
+
+	if !dnsCfg.Enable {
+		err = fmt.Errorf("DNS server must be enable")
+		return
+	}
+
+	_, dnsPortStr, err := net.SplitHostPort(dnsCfg.Listen)
+	if err != nil {
+		err = fmt.Errorf("DNS server must be correct")
+		return
+	}
+
+	dnsPort, err := strconv.ParseUint(dnsPortStr, 10, 16)
+	if err != nil {
+		err = fmt.Errorf("DNS server must be correct")
+		return
+	}
+
+	if iptables.InboundInterface != "" {
+		inboundInterface = iptables.InboundInterface
+	}
+
+	if dialer.DefaultRoutingMark.Load() == 0 {
+		dialer.DefaultRoutingMark.Store(2158)
+	}
+
+	err = tproxy.SetTProxyIPTables(inboundInterface, bypass, uint16(tProxyPort), uint16(dnsPort))
 	if err != nil {
 		return
 	}
 
-	tproxy.CleanUpTProxyLinuxIPTables()
-
-	err = tproxy.SetTProxyLinuxIPTables(general.Interface, general.TProxyPort, dnsPort)
-
-	if err != nil {
-		log.Errorln("Can not setting iptables for TProxy on linux, %s", err.Error())
-		os.Exit(2)
-	}
+	log.Infoln("[IPTABLES] Setting iptables completed")
 }
 
-func CleanUp() {
-	P.CleanUp()
-	if runtime.GOOS == "linux" {
-		tproxy.CleanUpTProxyLinuxIPTables()
-	}
+func Shutdown() {
+	P.Cleanup()
+	tproxy.CleanupTProxyIPTables()
+
+	log.Warnln("Clash shutting down")
 }

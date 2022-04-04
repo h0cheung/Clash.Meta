@@ -31,7 +31,13 @@ type HealthCheck struct {
 func (hc *HealthCheck) process() {
 	ticker := time.NewTicker(time.Duration(hc.interval) * time.Second)
 
-	go hc.check()
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		<-t.C
+		t.Stop()
+		hc.check()
+	}()
+
 	for {
 		select {
 		case <-ticker.C:
@@ -62,7 +68,7 @@ func (hc *HealthCheck) check() {
 	b, _ := batch.New(context.Background(), batch.WithConcurrencyNum(10))
 	for _, proxy := range hc.proxies {
 		p := proxy
-		b.Go(p.Name(), func() (interface{}, error) {
+		b.Go(p.Name(), func() (any, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), defaultURLTestTimeout)
 			defer cancel()
 			p.URLTest(ctx, hc.url)

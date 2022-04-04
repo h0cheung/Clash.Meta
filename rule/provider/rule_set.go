@@ -4,13 +4,18 @@ import (
 	"fmt"
 	C "github.com/Dreamacro/clash/constant"
 	P "github.com/Dreamacro/clash/constant/provider"
+	"github.com/Dreamacro/clash/rule/common"
 )
 
 type RuleSet struct {
+	*common.Base
 	ruleProviderName string
 	adapter          string
 	ruleProvider     P.RuleProvider
-	ruleExtra        *C.RuleExtra
+}
+
+func (rs *RuleSet) ShouldFindProcess() bool {
+	return false
 }
 
 func (rs *RuleSet) RuleType() C.RuleType {
@@ -41,19 +46,15 @@ func (rs *RuleSet) getProviders() P.RuleProvider {
 	return rs.ruleProvider
 }
 
-func (rs *RuleSet) RuleExtra() *C.RuleExtra {
-	return nil
-}
-
-func NewRuleSet(ruleProviderName string, adapter string, ruleExtra *C.RuleExtra) (*RuleSet, error) {
+func NewRuleSet(ruleProviderName string, adapter string) (*RuleSet, error) {
 	rp, ok := RuleProviders()[ruleProviderName]
 	if !ok {
 		return nil, fmt.Errorf("rule set %s not found", ruleProviderName)
 	}
 	return &RuleSet{
+		Base:             &common.Base{},
 		ruleProviderName: ruleProviderName,
 		adapter:          adapter,
 		ruleProvider:     rp,
-		ruleExtra:        ruleExtra,
 	}, nil
 }

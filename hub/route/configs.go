@@ -78,18 +78,6 @@ func patchConfigs(w http.ResponseWriter, r *http.Request) {
 	P.ReCreateTProxy(pointerOrDefault(general.TProxyPort, ports.TProxyPort), tcpIn, udpIn)
 	P.ReCreateMixed(pointerOrDefault(general.MixedPort, ports.MixedPort), tcpIn, udpIn)
 
-	if general.Tun != nil {
-		err := P.ReCreateTun(*general.Tun, tcpIn, udpIn)
-		if err == nil {
-			log.Infoln("Recreate tun success.")
-		} else {
-			log.Errorln("Recreate tun failed: %s", err.Error())
-			render.Status(r, http.StatusBadRequest)
-			render.JSON(w, r, newError(err.Error()))
-			return
-		}
-	}
-
 	if general.Mode != nil {
 		tunnel.SetMode(*general.Mode)
 	}

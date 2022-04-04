@@ -1,16 +1,24 @@
 package logic
 
-import C "github.com/Dreamacro/clash/constant"
+import (
+	C "github.com/Dreamacro/clash/constant"
+	"github.com/Dreamacro/clash/rule/common"
+)
 
 type AND struct {
+	*common.Base
 	rules   []C.Rule
 	payload string
 	adapter string
 	needIP  bool
 }
 
+func (A *AND) ShouldFindProcess() bool {
+	return false
+}
+
 func NewAND(payload string, adapter string) (*AND, error) {
-	and := &AND{payload: payload, adapter: adapter}
+	and := &AND{Base: &common.Base{}, payload: payload, adapter: adapter}
 	rules, err := parseRuleByPayload(payload)
 	if err != nil {
 		return nil, err
@@ -51,8 +59,4 @@ func (A *AND) Payload() string {
 
 func (A *AND) ShouldResolveIP() bool {
 	return A.needIP
-}
-
-func (A *AND) RuleExtra() *C.RuleExtra {
-	return nil
 }

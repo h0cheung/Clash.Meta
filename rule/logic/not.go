@@ -3,16 +3,22 @@ package logic
 import (
 	"fmt"
 	C "github.com/Dreamacro/clash/constant"
+	"github.com/Dreamacro/clash/rule/common"
 )
 
 type NOT struct {
+	*common.Base
 	rule    C.Rule
 	payload string
 	adapter string
 }
 
+func (not *NOT) ShouldFindProcess() bool {
+	return false
+}
+
 func NewNOT(payload string, adapter string) (*NOT, error) {
-	not := &NOT{payload: payload, adapter: adapter}
+	not := &NOT{Base: &common.Base{}, payload: payload, adapter: adapter}
 	rule, err := parseRuleByPayload(payload)
 	if err != nil {
 		return nil, err
@@ -44,8 +50,4 @@ func (not *NOT) Payload() string {
 
 func (not *NOT) ShouldResolveIP() bool {
 	return not.rule.ShouldResolveIP()
-}
-
-func (not *NOT) RuleExtra() *C.RuleExtra {
-	return nil
 }

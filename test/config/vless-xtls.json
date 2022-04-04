@@ -8,9 +8,9 @@
                 "clients": [
                     {
                         "id": "b831381d-6324-4d53-ad4f-8cda48b30811",
+                        "email": "xtls@example.com",
                         "flow": "xtls-rprx-direct",
-                        "level": 0,
-                        "email": "love@example.com"
+                        "level": 0
                     }
                 ],
                 "decryption": "none"

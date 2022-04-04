@@ -3,7 +3,6 @@ package process
 import (
 	"encoding/binary"
 	"net"
-	"path/filepath"
 	"syscall"
 	"unsafe"
 
@@ -70,7 +69,7 @@ func findProcessName(network string, ip net.IP, port int) (string, error) {
 			continue
 		}
 
-		if !ip.Equal(srcIP) {
+		if !ip.Equal(srcIP) && (network == TCP || !srcIP.IsUnspecified()) {
 			continue
 		}
 
@@ -96,7 +95,7 @@ func getExecPathFromPID(pid uint32) (string, error) {
 		return "", errno
 	}
 
-	return filepath.Base(unix.ByteSliceToString(buf)), nil
+	return unix.ByteSliceToString(buf), nil
 }
 
 func readNativeUint32(b []byte) uint32 {

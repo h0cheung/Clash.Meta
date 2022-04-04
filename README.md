@@ -154,15 +154,14 @@ proxy-providers:
 
 Support outbound transport protocol `VLESS`.
 
-The XTLS support TCP/UDP by the XRAY-CORE.
+The XTLS support (TCP/UDP) transport by the XRAY-CORE.
 ```yaml
 proxies:
-  - name: "vless-tcp"
+  - name: "vless"
     type: vless
     server: server
     port: 443
     uuid: uuid
-    network: tcp
     servername: example.com # AKA SNI
     # flow: xtls-rprx-direct # xtls-rprx-origin  # enable XTLS
     # skip-cert-verify: true
@@ -172,57 +171,85 @@ proxies:
     server: server
     port: 443
     uuid: uuid
+    tls: true
     udp: true
     network: ws
     servername: example.com # priority over wss host
     # skip-cert-verify: true
-    ws-path: /path
-    ws-headers:
-      Host: example.com
+    ws-opts:
+      path: /path
+      headers: { Host: example.com, Edge: "12a00c4.fm.huawei.com:82897" }
+
+  - name: "vless-grpc"
+    type: vless
+    server: server
+    port: 443
+    uuid: uuid
+    tls: true
+    udp: true
+    network: grpc
+    servername: example.com # priority over wss host
+    # skip-cert-verify: true
+    grpc-opts: 
+      grpc-service-name: grpcname
 ```
 
-### IPTABLES auto-configuration
-Only work on Linux OS who support `iptables`, Clash will auto-configuration iptables for tproxy listener when `tproxy-port` value isn't zero.
+### IPTABLES configuration
+Work on Linux OS who's supported `iptables`
 
-If `TPROXY` is enabled, the `TUN` must be disabled.
 ```yaml
 # Enable the TPROXY listener
 tproxy-port: 9898
-# Disable the TUN listener
-tun:
-  enable: false
+
+iptables:
+  enable: true # default is false
+  inbound-interface: eth0 # detect the inbound interface, default is 'lo'
 ```
-Create user given name `Clash.Meta`.
 
-Run Meta Kernel by user `Clash.Meta` as a daemon.
 
-Create the systemd configuration file at /etc/systemd/system/clash.service:
+### General installation guide for Linux  
++ Create user given name `clash-meta`
+
++ Download and decompress pre-built binaries from [releases](https://github.com/MetaCubeX/Clash.Meta/releases)  
+
++ Rename executable file to `Clash-Meta` and move to `/usr/local/bin/` 
+
++ Create folder `/etc/Clash-Meta/` as working directory 
+
+
+
+Run Meta Kernel by user `clash-meta` as a daemon.
+
+Create the systemd configuration file at `/etc/systemd/system/Clash-Meta.service`:
 
 ```
 [Unit]
-Description=Clash.Meta Daemon, Another Clash Kernel.
-After=network.target
+Description=Clash-Meta Daemon, Another Clash Kernel.
+After=network.target NetworkManager.service systemd-networkd.service iwd.service
 
 [Service]
 Type=simple
-User=Clash.Meta
-Group=Clash.Meta
+User=clash-meta
+Group=clash-meta
+LimitNPROC=500
+LimitNOFILE=1000000
 CapabilityBoundingSet=cap_net_admin
 AmbientCapabilities=cap_net_admin
 Restart=always
-ExecStart=/usr/local/bin/Clash.Meta -d /etc/Clash.Meta
+ExecStartPre=/usr/bin/sleep 1s
+ExecStart=/usr/local/bin/Clash-Meta -d /etc/Clash-Meta
 
 [Install]
 WantedBy=multi-user.target
 ```
 Launch clashd on system startup with:
 ```shell
-$ systemctl enable Clash.Meta
+$ systemctl enable Clash-Meta
 ```
 Launch clashd immediately with:
 
 ```shell
-$ systemctl start Clash.Meta
+$ systemctl start Clash-Meta
 ```
 
 ### Display Process name
